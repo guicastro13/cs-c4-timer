@@ -20,7 +20,7 @@ NORMALIZATION_FACTOR = 1.0 / 255.0
 
 @dataclass
 class DetectionResources:
-    interpreter: Callable[[tf.Tensor], tf.Tensor]
+    infer: Callable[[tf.Tensor], tf.Tensor]
     grabber: mss
     input_buffer: np.ndarray
 
@@ -31,7 +31,7 @@ class IconDetector:
 
     @staticmethod
     def _build_resources(model_path: str) -> DetectionResources:
-        model = tf.keras.models.load_model(model_path)
+        model = tf.keras.models.load_model(model_path, compile=False)
 
         @tf.function
         def infer(batch: tf.Tensor) -> tf.Tensor:
@@ -39,15 +39,27 @@ class IconDetector:
 
         grabber = mss()
         input_buffer = np.zeros((1, TARGET_SIZE[1], TARGET_SIZE[0], 3), dtype=np.float32)
-        return DetectionResources(interpreter=infer, grabber=grabber, input_buffer=input_buffer)
+
+        return DetectionResources(
+            infer=infer,
+            grabber=grabber,
+            input_buffer=input_buffer,
+        )
 
     def detect_icon(self) -> bool:
         raw = self._resources.grabber.grab(ROI_MONITOR)
         frame = np.frombuffer(raw.rgb, dtype=np.uint8)
         frame = frame.reshape((raw.height, raw.width, 3))
+
         resized = cv2.resize(frame, TARGET_SIZE, interpolation=cv2.INTER_AREA)
-        self._resources.input_buffer[0] = resized * NORMALIZATION_FACTOR
-        prediction = self._resources.interpreter(self._resources.input_buffer)
+        np.multiply(
+            resized,
+            NORMALIZATION_FACTOR,
+            out=self._resources.input_buffer[0],
+            dtype=np.float32,
+        )
+
+        prediction = self._resources.infer(self._resources.input_buffer)
         score = float(prediction.numpy()[0])
         return score > THRESHOLD
 
@@ -81,14 +93,10 @@ class CountdownWindow:
         self.update_countdown()
         self.window.mainloop()
 
-    def get_current_countdown(self) -> int:
-        return self.countdown_time
 
-
-def create_and_start_countdown() -> CountdownWindow:
+def create_and_start_countdown() -> None:
     countdown_window = CountdownWindow()
     countdown_window.start()
-    return countdown_window
 
 
 def main() -> None:
